@@ -1,0 +1,778 @@
+---
+alwaysApply: false
+---
+
+This guide explains how to use the Atlassian CLI (ACLI) to create and manage Jira issues programmatically with proper formatting, custom fields, and team assignments in the Coincover Jira instance. Unless explicitly stated otherwise you should use the CLI to directly interact with Jira.
+
+# Language
+When writing epic and story descriptions use tempered factual language, avoid grandiose language, superluous adjectives or promises that are not guaranteed to be met.
+
+# Practical Advice
+- Epics are short lived and should be used to group related stories that are related to a single feature or problem.
+- Stories are operational and reflect the work required to complete the epic.
+- Optimise for fewer stories within any given epic. Related work should be grouped together into a single story if possible. They can be decomposed into smaller stories later if needed.
+- Use the /out directory to stage JSON payloads if required.
+
+# Prerequisites
+ACLI installed: brew install acli (macOS) or follow Atlassian CLI installation guide
+Authentication: Run acli auth login to authenticate with Coincover's Jira instance
+Project access: User must have permissions to create/edit issues in the target project
+⚠️ CRITICAL: Custom Field IDs
+BOTH fields are REQUIRED for ALL stories in the CCE project. Using the wrong ID in the wrong field will cause creation to fail.
+
+🔴 IMPORTANT: These are TWO DIFFERENT FIELDS
+There are TWO separate custom fields that you must set correctly:
+
+Super-Team Field = customfield_10972 (which team owns this work)
+Component Field = customfield_10970 (which product/area this affects)
+❌ DO NOT MIX THESE UP! Using a Team ID in the Component field or vice versa will cause errors.
+
+## Quick Reference Tables
+📋 Super-Team Field (customfield_10972)
+Field ID: customfield_10972
+Purpose: Assigns which engineering team owns this work
+
+Team Name	✅ CORRECT ID	Use For
+Stallions	11559	Core platform team work
+Control-Freaks	11560	Control platform team work (Recovery, ACL, Portal)
+(Infra)	11561	Infrastructure & DevOps team work
+Usage in JSON:
+
+"additionalAttributes": {
+  "customfield_10972": {
+    "id": "11560"  ← TEAM ID GOES HERE (e.g., Control-Freaks)
+  }
+}
+🏗️ Component Field (customfield_10970)
+Field ID: customfield_10970
+Purpose: Identifies which product/codebase component this affects
+
+Component Name	✅ CORRECT ID	Use For
+Control Interface	11554	User-facing Control Portal features
+Aave	11555	Aave integration work
+Cooper Integration	11556	Cooper platform integration
+Canton/Cumberland	11557	Canton/Cumberland specific features
+Infra	11558	Infrastructure/DevOps components
+Usage in JSON:
+
+"additionalAttributes": {
+  "customfield_10970": {
+    "id": "11554"  ← COMPONENT ID GOES HERE (e.g., Control Interface)
+  }
+}
+⚠️ Common Mistake: Mixing Up Field IDs
+❌ WRONG - This will FAIL:
+"additionalAttributes": {
+  "customfield_10972": {
+    "id": "11554"  ← ERROR! This is a COMPONENT ID, not a TEAM ID!
+  },
+  "customfield_10970": {
+    "id": "11560"  ← ERROR! This is a TEAM ID, not a COMPONENT ID!
+  }
+}
+✅ CORRECT - This will work:
+"additionalAttributes": {
+  "customfield_10972": {
+    "id": "11560"  ← TEAM: Control-Freaks (correct field)
+  },
+  "customfield_10970": {
+    "id": "11554"  ← COMPONENT: Control Interface (correct field)
+  }
+}
+📝 Decision Tree: Which IDs Should I Use?
+Step 1: Choose Your Team (customfield_10972)
+Is this work for...
+├─ Control platform (Recovery, ACL, Portal)? → Use 11560 (Control-Freaks)
+├─ Core wallet/transaction features? → Use 11559 (Stallions)
+└─ Infrastructure/AWS/DevOps? → Use 11561 (Infra)
+Step 2: Choose Your Component (customfield_10970)
+Does this work affect...
+├─ Control Portal UI/API? → Use 11554 (Control Interface)
+├─ Aave integration? → Use 11555 (Aave)
+├─ Cooper integration? → Use 11556 (Cooper Integration)
+├─ Canton/Cumberland? → Use 11557 (Canton/Cumberland)
+└─ Infrastructure/DevOps? → Use 11558 (Infra)
+Example Combinations
+Story Type	Team (10972)	Component (10970)	Example
+Control Recovery UI	11560 (Control-Freaks)	11554 (Control Interface)	"UI: Recovery Management page"
+Control API work	11560 (Control-Freaks)	11554 (Control Interface)	"API: Recovery approvals endpoint"
+AWS infrastructure	11561 (Infra)	11558 (Infra)	"Infra: Setup Redis cluster"
+Core wallet feature	11559 (Stallions)	11554 (Control Interface)	"API: Wallet creation endpoint"
+Creating Stories and Epics
+🔐 Before You Create ANYTHING - ID Verification Checklist
+STOP! Before creating a story, verify:
+
+□ I'm using customfield_10972 for TEAM assignment
+  └─ Valid IDs: 11559, 11560, or 11561 ONLY
+
+□ I'm using customfield_10970 for COMPONENT assignment  
+  └─ Valid IDs: 11554, 11555, 11556, 11557, or 11558 ONLY
+
+□ I have NOT mixed up these two fields
+
+□ Both fields are present in additionalAttributes
+If you can't check ALL boxes above, DO NOT proceed with creation!
+
+Basic Story Creation
+Stories in the CCE project require: 1. A Super-Team assignment (customfield_10972) - MUST be 11559, 11560, or 11561 2. A Component assignment (customfield_10970) - MUST be 11554-11558 3. An Epic link (parentIssueId) if linking to an epic
+
+Example: Creating a Single Story
+cat > /tmp/story.json << 'EOF'
+{
+  "projectKey": "CCE",
+  "type": "Story",
+  "summary": "API: Implement user authentication",
+  "description": {
+    "content": [
+      {
+        "content": [
+          {
+            "text": "Implement JWT-based authentication for the API endpoints.",
+            "type": "text"
+          }
+        ],
+        "type": "paragraph"
+      }
+    ],
+    "type": "doc",
+    "version": 1
+  },
+  "parentIssueId": "CCE-55",
+  "additionalAttributes": {
+    "customfield_10972": {
+      "id": "11560"
+    },
+    "customfield_10970": {
+      "id": "11554"
+    }
+  }
+}
+EOF
+
+acli jira workitem create --from-json /tmp/story.json
+Explanation: - projectKey: The Jira project key (CCE) - type: Story, Task, Bug, or Epic - summary: The issue title - description: Must use ADF format (see below) - parentIssueId: Links to an epic (e.g., "CCE-55") - customfield_10972: TEAM field - use "11560" (Control-Freaks), "11559" (Stallions), or "11561" (Infra) - ⚠️ DO NOT use 11554-11558 here - those are component IDs! - customfield_10970: COMPONENT field - use "11554" (Control Interface), "11555" (Aave), "11556" (Cooper), "11557" (Canton/Cumberland), or "11558" (Infra) - ⚠️ DO NOT use 11559-11561 here - those are team IDs!
+
+Atlassian Document Format (ADF)
+ADF is Jira Cloud's rich text format. You must use ADF JSON for descriptions, not plain text or wiki markup.
+
+Basic ADF Structure
+{
+  "version": 1,
+  "type": "doc",
+  "content": [
+    // Array of content nodes (paragraphs, headings, lists, etc.)
+  ]
+}
+Common ADF Elements
+Paragraph
+{
+  "type": "paragraph",
+  "content": [
+    {
+      "type": "text",
+      "text": "This is a paragraph."
+    }
+  ]
+}
+Heading (h2-h6)
+{
+  "type": "heading",
+  "attrs": {"level": 2},
+  "content": [
+    {
+      "type": "text",
+      "text": "Section Heading"
+    }
+  ]
+}
+Bold Text
+{
+  "type": "text",
+  "text": "Bold text",
+  "marks": [{"type": "strong"}]
+}
+Bullet List
+{
+  "type": "bulletList",
+  "content": [
+    {
+      "type": "listItem",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "First item"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "listItem",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Second item"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+Numbered List
+{
+  "type": "orderedList",
+  "content": [
+    {
+      "type": "listItem",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "First step"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+Complete ADF Example
+{
+  "version": 1,
+  "type": "doc",
+  "content": [
+    {
+      "type": "heading",
+      "attrs": {"level": 2},
+      "content": [{"type": "text", "text": "Summary"}]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "This is a description with "
+        },
+        {
+          "type": "text",
+          "text": "bold text",
+          "marks": [{"type": "strong"}]
+        },
+        {
+          "type": "text",
+          "text": " and normal text."
+        }
+      ]
+    },
+    {
+      "type": "heading",
+      "attrs": {"level": 2},
+      "content": [{"type": "text", "text": "Requirements"}]
+    },
+    {
+      "type": "bulletList",
+      "content": [
+        {
+          "type": "listItem",
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [{"type": "text", "text": "First requirement"}]
+            }
+          ]
+        },
+        {
+          "type": "listItem",
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [{"type": "text", "text": "Second requirement"}]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+Editing Epic Descriptions
+When editing epics or stories, you need to use the --from-json flag with an "issues" array.
+
+Example: Update Epic Description
+cat > /tmp/epic-update.json << 'EOF'
+{
+  "issues": ["CCE-55"],
+  "description": {
+    "version": 1,
+    "type": "doc",
+    "content": [
+      {
+        "type": "heading",
+        "attrs": {"level": 2},
+        "content": [{"type": "text", "text": "Summary"}]
+      },
+      {
+        "type": "paragraph",
+        "content": [
+          {
+            "type": "text",
+            "text": "This epic covers the implementation of..."
+          }
+        ]
+      },
+      {
+        "type": "heading",
+        "attrs": {"level": 2},
+        "content": [{"type": "text", "text": "Goals"}]
+      },
+      {
+        "type": "bulletList",
+        "content": [
+          {
+            "type": "listItem",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [{"type": "text", "text": "Enable feature X"}]
+              }
+            ]
+          },
+          {
+            "type": "listItem",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [{"type": "text", "text": "Improve performance"}]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
+EOF
+
+acli jira workitem edit --from-json /tmp/epic-update.json --yes
+Important Notes: - The issues array can contain one or more issue keys - Use --yes to skip confirmation prompts - Cannot combine --from-json with other flags like --key or --description
+
+Bulk Story Creation Script
+Here's a complete example of creating multiple stories for an epic:
+
+#!/bin/bash
+
+# Story 1: DB Work
+cat > /tmp/story-1.json << 'EOF'
+{
+  "projectKey": "CCE",
+  "type": "Story",
+  "summary": "DB: Create user authentication schema",
+  "description": {
+    "content": [
+      {
+        "content": [
+          {
+            "text": "Design and implement database schema for user authentication including users, sessions, and tokens tables.",
+            "type": "text"
+          }
+        ],
+        "type": "paragraph"
+      }
+    ],
+    "type": "doc",
+    "version": 1
+  },
+  "parentIssueId": "CCE-55",
+  "additionalAttributes": {
+    "customfield_10972": {"id": "11560"},
+    "customfield_10970": {"id": "11554"}
+  }
+}
+EOF
+acli jira workitem create --from-json /tmp/story-1.json
+echo "Created DB story"
+
+# Story 2: API Work
+cat > /tmp/story-2.json << 'EOF'
+{
+  "projectKey": "CCE",
+  "type": "Story",
+  "summary": "API: Implement login endpoint",
+  "description": {
+    "content": [
+      {
+        "content": [
+          {
+            "text": "Create POST /auth/login endpoint with JWT token generation.",
+            "type": "text"
+          }
+        ],
+        "type": "paragraph"
+      }
+    ],
+    "type": "doc",
+    "version": 1
+  },
+  "parentIssueId": "CCE-55",
+  "additionalAttributes": {
+    "customfield_10972": {"id": "11560"},
+    "customfield_10970": {"id": "11554"}
+  }
+}
+EOF
+acli jira workitem create --from-json /tmp/story-2.json
+echo "Created API story"
+
+# Story 3: UI Work
+cat > /tmp/story-3.json << 'EOF'
+{
+  "projectKey": "CCE",
+  "type": "Story",
+  "summary": "UI: Create login form",
+  "description": {
+    "content": [
+      {
+        "content": [
+          {
+            "text": "Implement login form with email/password fields and validation.",
+            "type": "text"
+          }
+        ],
+        "type": "paragraph"
+      }
+    ],
+    "type": "doc",
+    "version": 1
+  },
+  "parentIssueId": "CCE-55",
+  "additionalAttributes": {
+    "customfield_10972": {"id": "11560"},
+    "customfield_10970": {"id": "11554"}
+  }
+}
+EOF
+acli jira workitem create --from-json /tmp/story-3.json
+echo "Created UI story"
+
+echo "All stories created successfully!"
+Common Story Prefixes by Type
+Use these prefixes in story summaries for clarity:
+
+Prefix	Description	Example
+DB:	Database work	"DB: Add user_preferences table"
+API:	Backend API work	"API: Implement GET /users endpoint"
+UI:	Frontend UI work	"UI: Create user settings page"
+Backend:	Backend services	"Backend: Implement email notifications"
+Infra:	Infrastructure	"Infra: Setup Redis cache"
+Querying Jira with ACLI
+Search for Stories Under an Epic
+acli jira workitem search --jql "parent = CCE-55" --fields "key,summary,status"
+List Recent Stories
+acli jira workitem search --jql "project = CCE AND created >= -1d" --limit 20
+View Story Details
+acli jira workitem view CCE-60
+Get JSON Output
+acli jira workitem view CCE-60 --json
+Common Pitfalls and Solutions
+🚨 ❌ Problem #1: Using WRONG IDs in WRONG Fields (MOST COMMON ERROR!)
+Symptoms: - Story creation fails silently - Fields appear empty in Jira - No clear error message
+
+Root Cause: Using a Team ID (11559-11561) in the Component field, or a Component ID (11554-11558) in the Team field.
+
+❌ WRONG - This LOOKS correct but will FAIL:
+
+"additionalAttributes": {
+  "customfield_10972": {"id": "11558"},  ← WRONG! 11558 is Infra COMPONENT, not a team
+  "customfield_10970": {"id": "11561"}   ← WRONG! 11561 is Infra TEAM, not a component
+}
+✅ CORRECT - Match IDs to the right field:
+
+"additionalAttributes": {
+  "customfield_10972": {"id": "11561"},  ← CORRECT! Team field gets a TEAM ID
+  "customfield_10970": {"id": "11558"}   ← CORRECT! Component field gets a COMPONENT ID
+}
+Memory Aid: - customfield_10972 (ends in 72) = TEAM assignment (who owns it) - customfield_10970 (ends in 70) = COMPONENT assignment (what it affects)
+
+Quick Validation: - Team IDs: 11559, 11560, 11561 (only 3 options) - Component IDs: 11554, 11555, 11556, 11557, 11558 (5 options) - If you put a team ID (11559-61) in customfield_10970, it's WRONG! - If you put a component ID (11554-58) in customfield_10972, it's WRONG!
+
+❌ Problem #2: "Component is required" error
+Cause: Missing one or both required custom fields
+
+Solution: Always include BOTH custom fields in additionalAttributes:
+
+"additionalAttributes": {
+  "customfield_10972": {"id": "11560"},  ← TEAM field (required)
+  "customfield_10970": {"id": "11554"}   ← COMPONENT field (required)
+}
+❌ Problem #3: "INVALID_INPUT" when editing
+Solution: When using --from-json for edits, include the issues array:
+
+{
+  "issues": ["CCE-55"],
+  "description": { ... }
+}
+❌ Problem #4: Description shows raw ADF JSON
+Solution: Don't pass ADF as a string to --description. Use JSON file with proper structure.
+
+❌ Problem #5: "Cannot set field 'labels'" error
+Solution: The CCE project doesn't support labels on creation. Remove labels from your JSON.
+
+❌ Problem #6: Wiki markup not rendering
+Solution: Jira Cloud uses ADF, not wiki markup. Convert to ADF JSON format.
+
+Team and Component Selection Guide
+When to Use Each Team
+Team	Use For	Example Stories
+Control-Freaks (11560)	Control Platform work	Authentication, Recovery, ACL Management
+Stallions (11559)	Core platform features	Wallet operations, Transaction processing
+(Infra) (11561)	Infrastructure & DevOps	AWS setup, Monitoring, CI/CD
+When to Use Each Component
+Component	Use For	Example Stories
+Control Interface (11554)	User-facing Control features	Portal UI, Recovery flows, User management
+Aave (11555)	Aave integration work	Aave-specific features
+Cooper Integration (11556)	Cooper-related work	Cooper platform integration
+Canton/Cumberland (11557)	Canton/Cumberland features	Specific to these projects
+Infra (11558)	Infrastructure work	AWS, monitoring, DevOps
+Complete Workflow Example
+Here's a complete workflow for creating an epic with stories:
+
+#!/bin/bash
+
+# Step 1: Create an epic (if needed)
+cat > /tmp/epic.json << 'EOF'
+{
+  "projectKey": "CCE",
+  "type": "Epic",
+  "summary": "User Authentication System",
+  "description": {
+    "version": 1,
+    "type": "doc",
+    "content": [
+      {
+        "type": "heading",
+        "attrs": {"level": 2},
+        "content": [{"type": "text", "text": "Summary"}]
+      },
+      {
+        "type": "paragraph",
+        "content": [
+          {
+            "type": "text",
+            "text": "Implement a complete user authentication system with JWT tokens, session management, and secure password handling."
+          }
+        ]
+      }
+    ]
+  },
+  "additionalAttributes": {
+    "customfield_10972": {"id": "11560"},
+    "customfield_10970": {"id": "11554"}
+  }
+}
+EOF
+
+EPIC_KEY=$(acli jira workitem create --from-json /tmp/epic.json | grep -oE 'CCE-[0-9]+')
+echo "Created epic: $EPIC_KEY"
+
+# Step 2: Create stories under the epic
+declare -a STORIES=(
+  "DB: User authentication schema"
+  "API: Login endpoint implementation"
+  "API: Token refresh endpoint"
+  "UI: Login form component"
+  "Backend: Password hashing service"
+)
+
+for STORY in "${STORIES[@]}"; do
+  cat > /tmp/story.json << EOF
+{
+  "projectKey": "CCE",
+  "type": "Story",
+  "summary": "$STORY",
+  "description": {
+    "content": [
+      {
+        "content": [{"text": "Implementation details for: $STORY", "type": "text"}],
+        "type": "paragraph"
+      }
+    ],
+    "type": "doc",
+    "version": 1
+  },
+  "parentIssueId": "$EPIC_KEY",
+  "additionalAttributes": {
+    "customfield_10972": {"id": "11560"},
+    "customfield_10970": {"id": "11554"}
+  }
+}
+EOF
+  
+  STORY_KEY=$(acli jira workitem create --from-json /tmp/story.json | grep -oE 'CCE-[0-9]+')
+  echo "Created story: $STORY_KEY - $STORY"
+done
+
+# Step 3: Verify all stories were created
+echo ""
+echo "All stories under epic $EPIC_KEY:"
+acli jira workitem search --jql "parent = $EPIC_KEY" --fields "key,summary"
+Tips for AI Assistants
+🚨 CRITICAL: Double-check field IDs EVERY TIME
+
+customfield_10972 = TEAM IDs (11559, 11560, 11561)
+customfield_10970 = COMPONENT IDs (11554, 11555, 11556, 11557, 11558)
+Using the wrong ID in the wrong field is the #1 cause of failures!
+Validate your field assignments before creation: bash # Quick validation check if [ "$(echo $TEAM_ID | grep -E '^1156[0-1]$')" ]; then echo "✅ Valid Team ID: $TEAM_ID" else echo "❌ Invalid Team ID: $TEAM_ID (must be 11559, 11560, or 11561)" fi
+
+Always use JSON files for complex operations rather than inline strings
+
+Validate JSON before sending to ACLI (use jq or similar)
+
+Store templates for common story types to speed up creation
+
+Use descriptive summaries with prefixes (DB:, API:, UI:, etc.)
+
+Link to epics using parentIssueId to maintain organization
+
+Include context in descriptions using ADF headings and lists
+
+Check for errors after each creation and handle failures gracefully
+
+Clean up test stories after successful automation
+
+When in doubt, refer back to the Quick Reference Tables at the top of this document
+
+Troubleshooting
+Check Authentication Status
+acli auth status
+Test with a Simple Story First
+cat > /tmp/test.json << 'EOF'
+{
+  "projectKey": "CCE",
+  "type": "Task",
+  "summary": "TEST: Simple test story",
+  "description": {
+    "content": [
+      {"content": [{"text": "Test description", "type": "text"}], "type": "paragraph"}
+    ],
+    "type": "doc",
+    "version": 1
+  },
+  "additionalAttributes": {
+    "customfield_10972": {"id": "11560"},
+    "customfield_10970": {"id": "11554"}
+  }
+}
+EOF
+
+acli jira workitem create --from-json /tmp/test.json
+View Full Error Details
+Add 2>&1 to capture stderr:
+
+acli jira workitem create --from-json /tmp/story.json 2>&1 | tee error.log
+Reference Links
+Atlassian CLI Documentation
+Atlassian Document Format (ADF)
+Jira REST API
+Quick Copy-Paste Templates
+Minimal Story Template
+{
+  "projectKey": "CCE",
+  "type": "Story",
+  "summary": "YOUR_SUMMARY_HERE",
+  "description": {
+    "content": [{"content": [{"text": "YOUR_DESCRIPTION_HERE", "type": "text"}], "type": "paragraph"}],
+    "type": "doc",
+    "version": 1
+  },
+  "parentIssueId": "EPIC_KEY_HERE",
+  "additionalAttributes": {
+    "customfield_10972": {"id": "11560"},
+    "customfield_10970": {"id": "11554"}
+  }
+}
+Rich Description Template
+{
+  "version": 1,
+  "type": "doc",
+  "content": [
+    {"type": "heading", "attrs": {"level": 2}, "content": [{"type": "text", "text": "Overview"}]},
+    {"type": "paragraph", "content": [{"type": "text", "text": "Description here..."}]},
+    {"type": "heading", "attrs": {"level": 2}, "content": [{"type": "text", "text": "Requirements"}]},
+    {
+      "type": "bulletList",
+      "content": [
+        {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Requirement 1"}]}]},
+        {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Requirement 2"}]}]}
+      ]
+    }
+  ]
+}
+🛡️ Field ID Validation Script
+Use this script to validate your field IDs before creation:
+
+#!/bin/bash
+
+# Field ID Validator for Jira Story Creation
+# Usage: ./validate-ids.sh <team_id> <component_id>
+
+TEAM_ID=$1
+COMPONENT_ID=$2
+
+echo "Validating Field IDs..."
+echo "========================"
+echo ""
+
+# Validate Team ID (customfield_10972)
+if [[ "$TEAM_ID" =~ ^(11559|11560|11561)$ ]]; then
+    case $TEAM_ID in
+        11559) echo "✅ Team ID: 11559 (Stallions) - VALID";;
+        11560) echo "✅ Team ID: 11560 (Control-Freaks) - VALID";;
+        11561) echo "✅ Team ID: 11561 (Infra) - VALID";;
+    esac
+else
+    echo "❌ Team ID: $TEAM_ID - INVALID!"
+    echo "   Must be: 11559, 11560, or 11561"
+    exit 1
+fi
+
+# Validate Component ID (customfield_10970)
+if [[ "$COMPONENT_ID" =~ ^(11554|11555|11556|11557|11558)$ ]]; then
+    case $COMPONENT_ID in
+        11554) echo "✅ Component ID: 11554 (Control Interface) - VALID";;
+        11555) echo "✅ Component ID: 11555 (Aave) - VALID";;
+        11556) echo "✅ Component ID: 11556 (Cooper Integration) - VALID";;
+        11557) echo "✅ Component ID: 11557 (Canton/Cumberland) - VALID";;
+        11558) echo "✅ Component ID: 11558 (Infra) - VALID";;
+    esac
+else
+    echo "❌ Component ID: $COMPONENT_ID - INVALID!"
+    echo "   Must be: 11554, 11555, 11556, 11557, or 11558"
+    exit 1
+fi
+
+echo ""
+echo "========================"
+echo "✅ ALL IDs VALID - Safe to proceed with story creation"
+echo ""
+echo "Use in your JSON as:"
+echo '  "additionalAttributes": {'
+echo "    \"customfield_10972\": {\"id\": \"$TEAM_ID\"},"
+echo "    \"customfield_10970\": {\"id\": \"$COMPONENT_ID\"}"
+echo '  }'
+Example Usage:
+
+# Validate Control-Freaks + Control Interface
+./validate-ids.sh 11560 11554
+
+# Output:
+# ✅ Team ID: 11560 (Control-Freaks) - VALID
+# ✅ Component ID: 11554 (Control Interface) - VALID
+# ✅ ALL IDs VALID - Safe to proceed with story creation

@@ -1,5 +1,6 @@
 ---
-alwaysApply: true
+description: Read this rule when you are producing code
+alwaysApply: false
 ---
 
 # Code Documentation Standards

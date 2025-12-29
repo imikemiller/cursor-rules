@@ -1,6 +1,8 @@
 ---
-alwaysApply: true
+alwaysApply: false
+description: Read this rule when you are producing TypeScript code
 ---
+
 # TypeScript Coding Standards
 
 Follow these standards strictly. Deviations require explicit agreement with the user.
@@ -20,10 +22,10 @@ function createTransaction(
   toAddress: string,
   memo?: string,
   priority?: number
-) { }
+) {}
 
 // What do these arguments mean at the call site?
-createTransaction(100, 'USD', '0x123', '0x456', undefined, 2);
+createTransaction(100, "USD", "0x123", "0x456", undefined, 2);
 
 // ✅ GOOD: Object parameter
 function createTransaction(params: {
@@ -33,14 +35,14 @@ function createTransaction(params: {
   toAddress: string;
   memo?: string;
   priority?: number;
-}) { }
+}) {}
 
 // Self-documenting at the call site
 createTransaction({
   amount: 100,
-  currency: 'USD',
-  fromAddress: '0x123',
-  toAddress: '0x456',
+  currency: "USD",
+  fromAddress: "0x123",
+  toAddress: "0x456",
   priority: 2,
 });
 ```
@@ -52,6 +54,7 @@ createTransaction({
 **Never cast to `any` or `unknown`. This bypasses TypeScript's type system and hides bugs.**
 
 If you're reaching for a cast, it means either:
+
 - The types are wrong and need fixing at the source
 - You need a type guard or assertion function
 - The code needs restructuring
@@ -66,7 +69,7 @@ const result: ExpectedType = someValue;
 
 // ✅ GOOD: Use a type guard
 function isMyType(value: unknown): value is MyType {
-  return typeof value === 'object' && value !== null && 'requiredProp' in value;
+  return typeof value === "object" && value !== null && "requiredProp" in value;
 }
 
 if (isMyType(response)) {
@@ -74,7 +77,7 @@ if (isMyType(response)) {
 }
 
 // ✅ GOOD: Use assertion with runtime validation
-import { z } from 'zod';
+import { z } from "zod";
 
 const MyTypeSchema = z.object({ requiredProp: z.string() });
 const validated = MyTypeSchema.parse(response);
@@ -90,22 +93,22 @@ Inline imports obscure dependencies, make code harder to trace, and are often a 
 
 ```typescript
 // ❌ BAD: Inline type imports
-function processTransaction(tx: import('./types.js').Transaction) { }
+function processTransaction(tx: import("./types.js").Transaction) {}
 
-type Config = import('../../config.js').AppConfig;
+type Config = import("../../config.js").AppConfig;
 
 // ❌ BAD: Imports inside function scope
 async function analyseTransaction(txId: string) {
-  const { TransactionParser } = await import('./parser.js');
-  const { validateSchema } = await import('../utils/validation.js');
+  const { TransactionParser } = await import("./parser.js");
+  const { validateSchema } = await import("../utils/validation.js");
   // ...
 }
 
 // ✅ GOOD: All imports at top of file
-import type { Transaction } from './types.js';
-import type { AppConfig } from '../../config.js';
-import { TransactionParser } from './parser.js';
-import { validateSchema } from '../utils/validation.js';
+import type { Transaction } from "./types.js";
+import type { AppConfig } from "../../config.js";
+import { TransactionParser } from "./parser.js";
+import { validateSchema } from "../utils/validation.js";
 
 async function analyseTransaction(txId: string) {
   // ...
@@ -131,18 +134,22 @@ interface Transaction {
   currency: string;
 }
 
-function processTransaction(tx: Transaction) { }
+function processTransaction(tx: Transaction) {}
 
 // ❌ BAD: Inline type that duplicates existing structure
-function getUser(params: { id: string; email: string; role: 'admin' | 'user' }) { }
+function getUser(params: {
+  id: string;
+  email: string;
+  role: "admin" | "user";
+}) {}
 
 // ✅ GOOD: Import existing types
-import type { Transaction } from '@/types/transaction.js';
-import type { User } from '@/types/user.js';
+import type { Transaction } from "@/types/transaction.js";
+import type { User } from "@/types/user.js";
 
-function processTransaction(tx: Transaction) { }
+function processTransaction(tx: Transaction) {}
 
-function getUser(params: Pick<User, 'id' | 'email' | 'role'>) { }
+function getUser(params: Pick<User, "id" | "email" | "role">) {}
 ```
 
 **Before writing any new types:**
@@ -171,7 +178,7 @@ class PaymentProcessor implements TransactionProcessor {
   async process(tx: Transaction): Promise<ProcessResult> {
     // ...
   }
-  
+
   validate(tx: Transaction): ValidationOutcome {
     // ...
   }
@@ -182,7 +189,7 @@ class PaymentProcessor implements TransactionProcessor {
   async process(tx) {
     // ...
   }
-  
+
   validate(tx) {
     // ...
   }
@@ -191,11 +198,98 @@ class PaymentProcessor implements TransactionProcessor {
 
 The interface is the contract. The implementation inherits its types — don't repeat yourself.
 
+## No Enums: Use Const Objects Instead
+
+**Never use TypeScript enums. Use const objects with `as const` and derive union types from them.**
+
+Enums have several problems: they generate extra JavaScript code, allow reverse lookups that can be confusing, and are less flexible. Const objects provide the same type safety and dot-notation access, plus composability and better tree-shaking.
+
+```typescript
+// ❌ BAD: TypeScript enum
+enum Status {
+  PENDING = "PENDING",
+  ACTIVE = "ACTIVE",
+  COMPLETED = "COMPLETED",
+}
+
+// ✅ GOOD: Const object with derived type
+export const STATUS = {
+  PENDING: "PENDING",
+  ACTIVE: "ACTIVE",
+  COMPLETED: "COMPLETED",
+} as const;
+
+export type Status = (typeof STATUS)[keyof typeof STATUS];
+// Result: type Status = 'PENDING' | 'ACTIVE' | 'COMPLETED'
+
+// Use like an enum with dot notation
+if (currentStatus === STATUS.ACTIVE) {
+}
+
+// ✅ GOOD: Use typeof when referencing const values in type positions
+export const ACL_WORKFLOW_EVENTS = {
+  NOTIFY: "NOTIFY",
+  APPROVE: "APPROVE",
+  REJECT: "REJECT",
+} as const;
+
+export type AclNotifiedEvent = {
+  type: typeof ACL_WORKFLOW_EVENTS.NOTIFY;
+};
+
+// ❌ BAD: Missing typeof - this won't work
+export type AclNotifiedEventBad = {
+  type: ACL_WORKFLOW_EVENTS.NOTIFY; // Error: 'ACL_WORKFLOW_EVENTS' cannot be used as a type
+};
+```
+
+**Benefits:**
+
+- **Type safety:** The derived union type provides the same type checking as enums
+- **Dot notation access:** Use `STATUS.ACTIVE` just like `Status.ACTIVE`
+- **Composability:** Easily merge and extend const objects
+- **Tree-shaking:** Unused values are eliminated in production builds
+- **No runtime overhead:** Const objects compile to simple object literals
+
+**Composability example:**
+
+```typescript
+// Define groups of related values
+export const TERMINAL_STATES = {
+  EXPIRED: "EXPIRED",
+  CANCELLED: "CANCELLED",
+  APPROVED: "APPROVED",
+} as const;
+
+export const ACTIVE_STATES = {
+  RUNNING: "RUNNING",
+  VOTING: "VOTING",
+} as const;
+
+// Compose into a single object
+export const ALL_STATES = {
+  ...TERMINAL_STATES,
+  ...ACTIVE_STATES,
+} as const;
+
+// Derive the union type
+export type State = (typeof ALL_STATES)[keyof typeof ALL_STATES];
+
+// Use with dot notation
+if (state === ALL_STATES.APPROVED) {
+}
+if (state === TERMINAL_STATES.EXPIRED) {
+}
+```
+
+This pattern gives you enum-like ergonomics with the flexibility to compose, extend, and tree-shake.
+
 ## Summary
 
-| Rule | Standard | Exception |
-|------|----------|-----------|
-| Function parameters | Always use object params | Single unambiguous argument |
-| Type casting | Never cast to `any`/`unknown` | Only with explicit user agreement |
-| Imports | Always at top of file | Code-splitting with user agreement |
-| Type declarations | Reuse existing types | New types only when none exist |
+| Rule                | Standard                      | Exception                          |
+| ------------------- | ----------------------------- | ---------------------------------- |
+| Function parameters | Always use object params      | Single unambiguous argument        |
+| Type casting        | Never cast to `any`/`unknown` | Only with explicit user agreement  |
+| Imports             | Always at top of file         | Code-splitting with user agreement |
+| Type declarations   | Reuse existing types          | New types only when none exist     |
+| Enums               | Never use enums               | Use const objects with `as const`  |

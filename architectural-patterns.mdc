@@ -1,0 +1,394 @@
+---
+description: Read this rule when you are in plan mode or you are reasoning about code
+alwaysApply: false
+---
+# Code Organization
+
+This project aims to use a layered architecture pattern with Repositories for data access. Code is organized into distinct layers with separation of concerns and some guidance on what belongs where.
+
+### Architecture Pattern
+
+The codebase is structured with the following layers:
+
+```
+Handlers (Presentation) → Services (Application) → Repositories (Infrastructure) → ORM/Database
+```
+
+Dependencies flow in one direction: outer layers depend on inner layers, but inner layers never depend on outer layers.
+
+### Layer Responsibilities and Rules
+
+#### 1. Handlers (`src/handlers/`)
+
+**Purpose**: Thin orchestration layer that handles HTTP request/response concerns.
+
+**Rules**:
+
+- Should be pure and skinny, free from business logic
+- Responsible only for:
+  - HTTP request/response transformation
+  - Request validation via Dto assignment
+  - Middleware composition (logging, tracing, validation, error handling)
+  - Service instantiation and invocation
+- Should remain lightweight and focused solely on HTTP concerns
+
+**Example**:
+
+```typescript
+export const legacyAssignKey = async ({ body, logger }: EventWithLogger<...>) => {
+  // Instantiate dependencies
+  const organisationService = createOrganisationRepo(db);
+  const keysService = createKeysRepo();
+
+  // Create service with dependencies
+  const legacyKeysService = createLegacyKeysService(
+    organisationService,
+    keysService,
+    logger,
+  );
+
+  // Delegate to service
+  return await legacyKeysService.assignKey(body, apiKey);
+};
+```
+
+#### 2. Services (`src/services/`)
+
+**Purpose**: Contains all business logic and orchestrates workflows by composing repositories and other services.
+
+**Rules**:
+
+- All business logic belongs here, not in handlers or repositories
+- Should accept all dependencies as function arguments
+  - Services should never import or instantiate their dependencies directly
+  - Use factory functions (e.g., `createXxxService()`) that accept dependencies as parameters
+  - This enables easy unit testing by allowing dependencies to be mocked
+- Composes repositories and other services to implement business workflows
+- Should be unit tested with mocked dependencies
+- Handles:
+  - Business rules and validation
+  - Domain logic orchestration
+  - Cross-cutting concerns (error handling, logging)
+- **Error handling**: Custom errors should extend `RequestError` from `@coincover/serverless-utils` so they can be properly handled by the `useErrorHandler` middleware
+
+**Example**:
+
+```typescript
+// ✅ Good: Service accepts dependencies as arguments
+export function createLegacyKeysService(
+  organisationService: ReturnType<typeof createOrganisationService>,
+  keysService: ReturnType<typeof createKeysService>,
+  logger: Logger,
+) {
+  async function assignKey(...) {
+    // Business logic using injected dependencies
+  }
+  return { assignKey };
+}
+
+// ✅ Good: Custom errors extend RequestError for middleware handling
+import { RequestError } from "@coincover/serverless-utils";
+
+export class OrganisationPartnerNotFoundError extends RequestError {
+  constructor(externalCustomerId: string) {
+    super(
+      `Organisation partner not found for external customer ID: ${externalCustomerId}`,
+      404,
+    );
+    this.name = "OrganisationPartnerNotFoundError";
+  }
+}
+
+// ❌ Bad: Service imports dependencies directly
+import db from "@repo/db-client";
+export function createLegacyKeysService() {
+  const orgService = createOrganisationService(db); // Don't do this
+}
+```
+
+#### 3. Repositories (`src/repositories/`)
+
+**Purpose**: Pure data access abstraction that encapsulates database interactions.
+
+**Rules**:
+
+- Pure data access only - no business logic
+- Encapsulates ORM interactions and database queries
+- Encodes complex queries (table joins, clauses, filters) into meaningful, domain-oriented methods
+- Services should never directly interact with the ORM; all data access must go through repositories
+- Provides clean boundaries for testing by abstracting data access concerns
+
+**Example**:
+
+```typescript
+export function createOrganisationService(
+  db: typeof import("@repo/db-client").default,
+) {
+  async function getOrganisationPartnerByExternalCustomerId(
+    externalCustomerId: string,
+  ) {
+    // Encapsulates complex join query
+    return await db
+      .selectFrom("organisation_partners as op")
+      .innerJoin("partners as p", "op.partner_id", "p.id")
+      .innerJoin("organisations as o", "op.organisation_id", "o.id")
+      .where("op.external_customer_id", "=", externalCustomerId)
+      .executeTakeFirst();
+  }
+  return { getOrganisationPartnerByExternalCustomerId };
+}
+```
+
+### Benefits
+
+This organization ensures:
+
+- **Testability**: Each layer can be tested in isolation with mocked dependencies
+- **Maintainability**: Clear boundaries make code easier to understand and modify
+- **Flexibility**: Infrastructure can be swapped without affecting business logic
+- **Separation of Concerns**: Each layer has a single, well-defined responsibility
+
+# API Design
+
+Name API handlers, serverless function names, and endpoint paths consistently using the same base identifier. The file directory structure should reflect the API path structure.
+
+This allows network requests to be easily mapped to the handler code and infrastructure. When debugging or tracing a request, you can quickly locate the handler file and function by following the naming pattern.
+
+✅ Good.
+
+```
+  listAclChanges:
+    handler: src/handlers/organisations/acl-changes/list-acl-changes.default
+    events:
+      - http:
+          path: v1/organisations/{organisationId}/acl-changes/list-acl-changes
+          method: get
+          cors: true
+          authorizer:
+            name: cognitoAuthorizer
+            type: COGNITO_USER_POOLS
+            identitySource: method.request.header.Authorization
+            arn: ${self:custom.cognitoAuthorizerArn}
+            scopes:
+              - "acl:read:self"
+              - "acl:read:all"
+```
+
+The function name (`listAclChanges`), handler file path (`organisations/list-acl-changes`), and API path (`organisations/{organisationId}/list-acl-changes`) all use consistent naming, and the directory structure matches the API path structure.
+
+❌ Bad.
+
+```
+  getAclChanges:
+    handler: src/handlers/acl/fetch-acl-changes.default
+    events:
+      - http:
+          path: v1/organisations/{organisationId}/acl/list
+          method: get
+```
+
+The function name, handler file path, and API path all use different identifiers and directory structures, making it difficult to trace a request to its implementation.
+
+## Single Responsibility Principle
+
+Action handlers (POST, PUT, DELETE) should only perform their specific action and return a simple success response. They should not return full UI data structures, as this violates the single responsibility principle and overloads the handler's responsibility.
+
+✅ Good.
+
+```typescript
+service.recordVote({
+  backup_acl_member_id: backupAclMemberId,
+  decision: body.decision,
+});
+// Handler records the vote and returns simple success
+return OkResponse({
+  success: true,
+  decision: body.decision,
+  message: `Vote ${body.decision} recorded successfully`,
+});
+```
+
+```typescript
+// Client uses React Query mutation with cache invalidation
+const confirmMutation = useMutation({
+  mutationFn: (payload) =>
+    aclChangesConfirmDecisions(
+      organisationId,
+      payload.aclChangeRequestId,
+      payload.decisions,
+    ),
+  onSuccess: () => {
+    // Invalidate React Query cache to trigger refetch of list data
+    queryClient.invalidateQueries({
+      queryKey: ["acl-changes", organisationId],
+    });
+  },
+});
+```
+
+The handler does its job (recording the vote), and the client refreshes the UI by invalidating the React Query cache, which automatically triggers a refetch of the list endpoint.
+
+❌ Bad.
+
+```typescript
+// Handler does the work
+service.recordVote({
+  backup_acl_member_id: backupAclMemberId,
+  decision: body.decision,
+});
+// Handler then returns refreshed data for the UI to display
+const updatedItem = await service.getAclActionsForUI({ ... });
+return OkResponse({ data: updatedItem });
+```
+
+Returning UI data directly from an action handler violates single responsibility. The handler should focus on performing the action, and UI refresh should be handled by the client calling the appropriate read endpoint (e.g., `listAclChanges`).
+
+## Component Architecture: Container/Presenter Pattern
+
+React components should separate pure presentational UI from business logic. This pattern enables easy Storybook stories, testing, and reusability while keeping business logic contained.
+
+### Pattern Structure
+
+1. **Presenter Component** (`ComponentNameView`): Pure, props-driven UI component with no business logic dependencies
+2. **Container Component** (`ComponentName`): Wraps the presenter with business logic (hooks, mutations, side effects)
+
+✅ Good.
+
+```typescript
+/**
+ * Pure presentational component - no business logic dependencies
+ */
+export type AclMemberViewProps = {
+  email: string;
+  status: "approved" | "removed" | "added" | "skeleton";
+  onEmailClick?: () => void;
+  emailProps?: React.HTMLAttributes<HTMLSpanElement>;
+};
+
+export function AclMemberView({
+  email,
+  status = "approved",
+  onEmailClick,
+  emailProps,
+}: AclMemberViewProps) {
+  const { icon: Icon, color, textColor, iconColor } = iconMap[status];
+  
+  return (
+    <div className="flex items-center gap-2">
+      <div className={cn("h-8 w-8 rounded-full", color)}>
+        <Icon className={cn("h-4 w-4", iconColor)} />
+      </div>
+      <span className={cn("text-sm", textColor)} onClick={onEmailClick} {...emailProps}>
+        {email}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Container component - adds business logic
+ */
+export function AclMember({
+  email,
+  status = "approved",
+  organisationId,
+  backupId,
+  backupAclMemberId,
+}: AclMemberProps) {
+  const generateVotingTokenMutation = useGenerateVotingTokenMutation(
+    organisationId,
+    backupId,
+  );
+  
+  const handleCopyVotingLink = async (backupAclMemberId: string) => {
+    // Business logic here
+  };
+  
+  const secret = useDevSecretClick(() => {
+    if (backupAclMemberId) {
+      handleCopyVotingLink(backupAclMemberId);
+    }
+  });
+  
+  return (
+    <AclMemberView
+      email={email}
+      status={status}
+      emailProps={secret}
+    />
+  );
+}
+```
+
+```typescript
+// Storybook stories use pure component - no mocks needed
+export const Approved: StoryObj = {
+  render: () => (
+    <AclMemberView
+      email="user@example.com"
+      status="approved"
+    />
+  ),
+};
+```
+
+The presenter component is pure and testable. The container adds business logic. Stories can use the pure component without mocking hooks or providers.
+
+❌ Bad.
+
+```typescript
+// Component mixes UI and business logic
+export function AclMember({
+  email,
+  status = "approved",
+  organisationId,
+  backupId,
+  backupAclMemberId,
+}: AclMemberProps) {
+  const generateVotingTokenMutation = useGenerateVotingTokenMutation(
+    organisationId,
+    backupId,
+  );
+  
+  // Business logic mixed with UI rendering
+  const handleCopyVotingLink = async (backupAclMemberId: string) => {
+    // ...
+  };
+  
+  const secret = useDevSecretClick(() => {
+    // ...
+  });
+  
+  return (
+    <div className="flex items-center gap-2">
+      {/* UI rendering */}
+    </div>
+  );
+}
+```
+
+```typescript
+// Stories require mocking hooks and providers
+export const Approved: StoryObj = {
+  render: () => (
+    <QueryClientProvider client={queryClient}>
+      <AclMember
+        email="user@example.com"
+        status="approved"
+        organisationId="org-123"
+        backupId="backup-123"
+      />
+    </QueryClientProvider>
+  ),
+};
+```
+
+Mixing UI and business logic makes components harder to test and story. Stories require complex setup with providers and mocks, making them brittle and slow to write.
+
+### Benefits
+
+- **Storybook**: Pure components can be documented without mocking dependencies
+- **Testing**: Easy to unit test pure components with simple props
+- **Reusability**: Pure components can be used with different business logic implementations
+- **Maintainability**: Clear separation of concerns makes code easier to understand and modify
+
