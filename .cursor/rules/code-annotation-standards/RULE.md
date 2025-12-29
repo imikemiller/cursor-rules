@@ -1,6 +1,7 @@
 ---
 alwaysApply: true
 ---
+
 # Code Documentation Standards
 
 Annotate code thoroughly to preserve architectural decisions and reasoning. Use JSDoc as the standard documentation format for all functions, classes, and modules.
@@ -19,7 +20,7 @@ Annotate code thoroughly to preserve architectural decisions and reasoning. Use 
 
 ## Core Principles
 
-1. **Why over what** — Explain *why* this approach was chosen, not just what the code does. The code itself shows the "what".
+1. **Why over what** — Explain _why_ this approach was chosen, not just what the code does. The code itself shows the "what".
 
 2. **Alternatives considered** — Note approaches you actually evaluated and why they were unsuitable.
 
@@ -36,16 +37,16 @@ Use JSDoc for all exported functions, classes, and significant internal function
 ```typescript
 /**
  * Calculates the risk score for a transaction based on counterparty history.
- * 
+ *
  * DECISION: User specified weighted moving average rather than simple average
  * because recent transactions are more indicative of current behaviour patterns.
- * 
+ *
  * ALTERNATIVES: Discussed exponential decay scoring but agreed the added
  * complexity wasn't justified given the 90-day analysis window requirement.
- * 
+ *
  * CONSTRAINTS: Must complete within 50ms to meet API SLA (per requirements).
  * This is why we pre-compute counterparty stats rather than querying on each call.
- * 
+ *
  * @param transaction - The transaction to analyse
  * @param counterpartyHistory - Previous transactions with this counterparty
  * @returns Risk score between 0-100, where 100 is highest risk
@@ -74,16 +75,16 @@ For significant modules, include a header block explaining the module's purpose 
 ```typescript
 /**
  * @module TransactionAnalyser
- * 
+ *
  * Handles real-time transaction risk scoring for the TXM pipeline.
- * 
+ *
  * ARCHITECTURE: Discussed stateless design to support horizontal scaling.
  * All state lives in Redis rather than in-memory.
- * 
+ *
  * DEPENDENCIES:
  * - Upstream: SQS queue populated by blockchain listeners
  * - Downstream: Alert service via SNS, results cached in Redis
- * 
+ *
  * ASSUMPTIONS (confirmed with user):
  * - Transactions arrive at most once (deduplication happens upstream)
  * - Redis is available; failure triggers circuit breaker to DLQ
